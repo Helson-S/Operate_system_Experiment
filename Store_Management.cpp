@@ -8,12 +8,13 @@
 *******************************************************/
 
 #include <stdio.h>
+#include <unistd.h>
 #include <time.h>
 #include <stdlib.h>
-#include <assert.h>
 #include <error.h>
-
 #define NDEBUG
+#include <assert.h>
+
 #define MAXQSIZE 1000
 #define algorithm "LRU"
 // #define algorithm "FIFO"
@@ -22,7 +23,7 @@
 #define allocate_page ((var_program_instruction/var_Instruction_perPage)+1)
 #define physical_block_count 4
 #define Execute_controler 10000
-#define Test_times 100
+#define Test_times 2000
 
 typedef struct cycle_Queue
 {
@@ -41,6 +42,8 @@ typedef struct page{
 
 int var_physical_block;
 int page_fault_count = 0;
+unsigned int single_Execute_Counter = 0; // Used by Simulate_Execution,counter of single Execution.
+bool Queue_init_check = 0; // Used by initQueue. Mark, if Queue is initiated.
 cycle_Queue var_queue;
 
 void physical_block_timeChcker(page *array_page)
@@ -48,22 +51,27 @@ void physical_block_timeChcker(page *array_page)
     var_physical_block = 0;
     for(int i=0; i<allocate_page; i++)
     {
-        if(array_page[i].status == 1)
+        if(array_page[i].status == true)
         {
             array_page[i].time++;
             var_physical_block++;
+            #ifdef DEBUG
+            printf("page %d is mapped.\n",i);
+            #endif
         }
         else
         {
             array_page[i].time = 0;
         }
     }
+    #ifdef DEBUG
+    printf("now the var_physical_block is %d.\n",var_physical_block);
+    #endif
 }
 
 void initQueue(cycle_Queue *ptr_Queue)
 {
-    static int first_time_check;
-    if(!first_time_check)
+    if(!Queue_init_check)
     {
         ptr_Queue->base = (int *)malloc(sizeof(int)*MAXQSIZE);
         if(!ptr_Queue->base)
@@ -72,8 +80,20 @@ void initQueue(cycle_Queue *ptr_Queue)
             exit(1);
         }
         ptr_Queue->front = ptr_Queue->rear = 0;
-        first_time_check++;
+        Queue_init_check = true;
     }
+}
+
+void DeleteQueue(cycle_Queue *ptr_Queue)
+{
+    if(Queue_init_check != true)
+    {
+        perror("can't free a Queue which isn't initiated.\n");
+        exit(1);
+    }
+    free(ptr_Queue->base);
+    ptr_Queue->base = NULL;
+    Queue_init_check = false;
 }
 
 void InQueue(cycle_Queue *ptr_Queue, int page_num)
@@ -118,7 +138,6 @@ void initial_page(page *array_page)
 
 int Instruction_Generator(int last_instrion, int program_instruction)
 {
-    srand(time(NULL));
     int choice = rand()%4 + 1;
     int Gnerate_Instruction;
     int selection_count;
@@ -131,7 +150,9 @@ int Instruction_Generator(int last_instrion, int program_instruction)
        if(last_instrion >= program_instruction)
             goto backward;
        Gnerate_Instruction = last_instrion + 1;
+       #ifdef DEBUG
        printf("[+] done,next instruction\n");
+       #endif
        break;
 
     case 2:
@@ -141,7 +162,9 @@ int Instruction_Generator(int last_instrion, int program_instruction)
         if(last_instrion >= program_instruction)
             goto backward;
         Gnerate_Instruction = last_instrion + 1;
+        #ifdef DEBUG
         printf("[+] done,next instruction\n");
+        #endif
         break;
 
     case 3:
@@ -151,9 +174,10 @@ int Instruction_Generator(int last_instrion, int program_instruction)
 backward:
         if(last_instrion == 0)
             goto forward;
-        srand(time(NULL));
         Gnerate_Instruction = rand()%last_instrion;
+        #ifdef DEBUG
         printf("[+] done,seek backward\n");
+        #endif
         break;
 
     case 4:
@@ -165,18 +189,21 @@ forward:
         if(selection_count == 0)
         {
             Gnerate_Instruction = program_instruction;
+            #ifdef DEBUG
             printf("[+] done,seek forward\n");
+            #endif
             break;
         }
         else
         {
-        // selection_count can not be negative
+        /* selection_count can not be negative */
         if(selection_count < 0)
             goto backward;
-        // selection_count is positive
-        srand(time(NULL));
+        /* selection_count is positive */
         Gnerate_Instruction = last_instrion + 1 + rand()%(selection_count);
+        #ifdef DEBUG
         printf("[+] done,seek forward\n");
+        #endif
         break;
         }
 
@@ -190,6 +217,7 @@ forward:
 
 void processing_unit(page *array_page, int instruction_num)
 {
+    physical_block_timeChcker(array_page);
     int hit_page= 0;
     int hit_page_idx = 0;
     for(int i=0; i<allocate_page; i++)
@@ -198,8 +226,10 @@ void processing_unit(page *array_page, int instruction_num)
         {
             if(instruction_num == array_page[i].instruction[j])
                 {
+                    #ifdef DEBUG
                     printf("hit page:%d\n",array_page[i].page_num);
                     printf("hit page index:%d\n",i);
+                    #endif
                     hit_page = array_page[i].page_num;
                     hit_page_idx = i;
                     goto found_hitpage;
@@ -216,7 +246,9 @@ found_hitpage:
     else
     {
         page_fault_count++;
+        #ifdef DEBUG
         printf("page fault occur!\n");
+        #endif
         if(var_physical_block == physical_block_count)
         {
             if(algorithm == "LRU")
@@ -245,23 +277,30 @@ found_hitpage:
         }
         assert(var_physical_block <= physical_block_count);
     }
-    physical_block_timeChcker(array_page);
 }
 
 double Simulate_Execution(page *array_page, int stru_num_begin)
 {
-    static unsigned int Execute_counter = 0;
+    /* static unsigned int Execute_counter = 0; */
     static double hit_rate;
-    if(Execute_counter <= Execute_controler)
+    if(single_Execute_Counter <= Execute_controler)
     {
         processing_unit(array_page,stru_num_begin);
         int stru_next = Instruction_Generator(stru_num_begin,var_program_instruction);
-        Execute_counter++;
+        single_Execute_Counter++;
         Simulate_Execution(array_page,stru_next);
     }
     else
     {
         hit_rate = double(Execute_controler-page_fault_count)/double(Execute_controler);
+        printf("\nLast time page_fault_count: %d\n",page_fault_count);
+        /* next is finishing work , do some clearation */
+        single_Execute_Counter = 0;
+        page_fault_count = 0;
+        if(algorithm == "FIFO")
+        {
+            DeleteQueue(&var_queue);
+        }
     }
     return hit_rate;
 }
@@ -270,6 +309,7 @@ int main()
 {
     double total_hit_rate = 0;
     double average_hit_rate = 0;
+    srand(time(NULL));
     for(int i=0; i<Test_times; i++)
     {
         /* Initialization */
@@ -277,12 +317,11 @@ int main()
         initial_page(var_array_page);
         /* Simulate Execution */
         double hit_rate;
-        hit_rate = Simulate_Execution(var_array_page,50);
-        printf("\npage_fault_count: %d\n",page_fault_count);
+        hit_rate = Simulate_Execution(var_array_page,20);
         printf("Hit rate:%f\n",hit_rate);
         total_hit_rate += hit_rate;
     }
     average_hit_rate = total_hit_rate/Test_times;
-    printf("average Hit rate:%f\n\n",average_hit_rate);
+    printf("\naverage Hit rate:%f\n\n",average_hit_rate);
     return 0;
 }
